@@ -2,7 +2,7 @@
 """
 Qwen-Image-Edit-2509 API Server
 Handles GPU inference, separated from frontend
-With Lightning LoRA for 2-step inference (~5.6s)
+With Lightning LoRA for 2-step inference (~3s, no negative_prompt)
 """
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '7'
@@ -46,6 +46,7 @@ class EditRequest(BaseModel):
     steps: int = 2  # Default 2 steps with Lightning LoRA
     ref_image: str | None = None  # Optional reference image for compositing
     blend_ratio: float = 0.5
+    use_cfg: bool = False  # True: CFG (cond+uncond, slower), False: cond only (faster)
 
 
 class EditResponse(BaseModel):
@@ -69,15 +70,16 @@ def load_pipeline():
 
     print(f"Model loaded! GPU Memory: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
-    # Load Lightning LoRA for fast 2-step inference
-    print("Loading Lightning LoRA (4-step version for 2-step inference)...")
+    # Load Lightning LoRA for fast inference
+    # Note: "4steps" LoRA allows minimum 2 steps (no 2steps version exists)
+    print("Loading Lightning LoRA (4steps version, used with 2 inference steps)...")
     pipeline.load_lora_weights(
         "lightx2v/Qwen-Image-Lightning",
         weight_name="Qwen-Image-Edit-Lightning-4steps-V1.0.safetensors",
     )
     print("Lightning LoRA loaded!")
 
-    # Warmup
+    # Warmup (no negative_prompt for fastest inference)
     print("Warming up...")
     dummy = Image.new('RGB', (512, 512), color='gray')
     with torch.no_grad():
@@ -87,23 +89,28 @@ def load_pipeline():
                 image=[dummy],
                 prompt="test",
                 generator=torch.Generator(device='cuda').manual_seed(42),
-                true_cfg_scale=4.0,
-                negative_prompt=" ",
                 num_inference_steps=2,
-                guidance_scale=1.0,
+                guidance_scale=3.5,
             )
     torch.cuda.synchronize()
-    print("Ready! (Lightning LoRA, 2-step inference ~5.6s)")
+    print("Ready! (Lightning LoRA, 2-step inference ~3s)")
 
 
 def base64_to_pil(b64_string: str) -> Image.Image:
     """Convert base64 string to PIL Image"""
+    from PIL import ImageOps
+
     # Remove data URL prefix if present
     if ',' in b64_string:
         b64_string = b64_string.split(',')[1]
 
     img_data = base64.b64decode(b64_string)
-    return Image.open(io.BytesIO(img_data)).convert('RGB')
+    img = Image.open(io.BytesIO(img_data))
+
+    # Apply EXIF orientation to fix rotation/flip issues
+    img = ImageOps.exif_transpose(img)
+
+    return img.convert('RGB')
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -113,22 +120,37 @@ def pil_to_base64(img: Image.Image) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-def process_image_sync(image: Image.Image, prompt: str, steps: int) -> Image.Image:
-    """Synchronous image processing"""
+def process_image_sync(image: Image.Image, prompt: str, steps: int, use_cfg: bool = False) -> Image.Image:
+    """Synchronous image processing
+
+    Args:
+        use_cfg: If True, use CFG (cond+uncond, slower but higher quality)
+                 If False, use cond only (faster, ~4s)
+    """
     global pipeline
 
     image = image.resize((512, 512), Image.LANCZOS)
 
     with torch.no_grad():
-        result = pipeline(
-            image=[image],
-            prompt=prompt,
-            generator=torch.Generator(device='cuda').manual_seed(42),
-            true_cfg_scale=4.0,
-            negative_prompt=" ",
-            num_inference_steps=steps,
-            guidance_scale=1.0,
-        )
+        if use_cfg:
+            # CFG mode: uses negative_prompt for classifier-free guidance
+            result = pipeline(
+                image=[image],
+                prompt=prompt,
+                negative_prompt="",
+                generator=torch.Generator(device='cuda').manual_seed(42),
+                num_inference_steps=steps,
+                guidance_scale=3.5,
+            )
+        else:
+            # Fast mode: cond only, no negative_prompt
+            result = pipeline(
+                image=[image],
+                prompt=prompt,
+                generator=torch.Generator(device='cuda').manual_seed(42),
+                num_inference_steps=steps,
+                guidance_scale=3.5,
+            )
 
     return result.images[0]
 
@@ -189,7 +211,8 @@ async def edit_image(request: EditRequest):
             process_image_sync,
             input_image,
             request.prompt,
-            request.steps
+            request.steps,
+            request.use_cfg
         )
 
         elapsed = time.time() - start

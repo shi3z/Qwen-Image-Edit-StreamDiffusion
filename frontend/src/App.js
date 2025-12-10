@@ -101,7 +101,8 @@ const styles = {
 function App() {
   const [activeTab, setActiveTab] = useState('webcam');
   const [prompt, setPrompt] = useState('Transform into oil painting style');
-  const [steps, setSteps] = useState(4);
+  const [steps, setSteps] = useState(2);
+  const [useCfg, setUseCfg] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [result, setResult] = useState(null);
@@ -113,12 +114,35 @@ function App() {
   const fileInputRef = useRef(null);
   const refInputRef = useRef(null);
 
-  const captureWebcam = useCallback(() => {
+  // Center crop image to square (512x512)
+  const centerCropToSquare = useCallback((imageData) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const size = Math.min(img.width, img.height);
+        const x = (img.width - size) / 2;
+        const y = (img.height - size) / 2;
+
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, x, y, size, size, 0, 0, 512, 512);
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
+      };
+      img.src = imageData;
+    });
+  }, []);
+
+  const captureWebcam = useCallback(async () => {
     if (webcamRef.current) {
-      return webcamRef.current.getScreenshot();
+      const screenshot = webcamRef.current.getScreenshot();
+      if (screenshot) {
+        return await centerCropToSquare(screenshot);
+      }
     }
     return null;
-  }, []);
+  }, [centerCropToSquare]);
 
   const processImage = async (imageData, refImageData = null) => {
     setProcessing(true);
@@ -134,6 +158,7 @@ function App() {
           steps,
           ref_image: refImageData,
           blend_ratio: blendRatio,
+          use_cfg: useCfg,
         }),
       });
 
@@ -152,19 +177,20 @@ function App() {
     }
   };
 
-  const handleWebcamCapture = () => {
-    const image = captureWebcam();
+  const handleWebcamCapture = async () => {
+    const image = await captureWebcam();
     if (image) {
       processImage(image);
     }
   };
 
-  const handleFileUpload = (e, setImage) => {
+  const handleFileUpload = async (e, setImage) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        setImage(event.target.result);
+      reader.onload = async (event) => {
+        const croppedImage = await centerCropToSquare(event.target.result);
+        setImage(croppedImage);
       };
       reader.readAsDataURL(file);
     }
@@ -222,6 +248,21 @@ function App() {
           onChange={(e) => setSteps(parseInt(e.target.value))}
           style={styles.slider}
         />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+          <label style={{ ...styles.label, marginBottom: 0 }}>
+            <input
+              type="checkbox"
+              checked={useCfg}
+              onChange={(e) => setUseCfg(e.target.checked)}
+              style={{ marginRight: '8px' }}
+            />
+            Use CFG (Cond+Uncond)
+          </label>
+          <span style={{ fontSize: '12px', color: '#666' }}>
+            {useCfg ? 'Slower (~6s), higher quality' : 'Fast (~4s), cond only'}
+          </span>
+        </div>
       </div>
 
       <div style={styles.content}>
@@ -234,6 +275,10 @@ function App() {
                 <Webcam
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
+                  mirrored={false}
+                  videoConstraints={{
+                    facingMode: 'user',
+                  }}
                   style={{ maxWidth: '100%', borderRadius: '5px' }}
                 />
               </div>
