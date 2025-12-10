@@ -1,6 +1,7 @@
-# Qwen-Image-Edit-2509 Fast WebUI
+# Qwen-Image-Edit-2509 StreamDiffusion WebUI
 
 Fast real-time image editing WebUI using Qwen-Image-Edit-2509 model.
+Inspired by StreamDiffusion and StreamDiffusion2
 
 ## Speed Improvements
 
