@@ -123,6 +123,15 @@ async def startup():
     load_pipeline()
 
 
+@app.get("/")
+async def root():
+    return {
+        "name": "Qwen-Image-Edit-2509 API",
+        "endpoints": ["/health", "/edit"],
+        "status": "running"
+    }
+
+
 @app.get("/health")
 async def health():
     return {
@@ -186,4 +195,4 @@ if __name__ == "__main__":
     print("Qwen-Image-Edit-2509 API Server")
     print("=" * 60)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8086)

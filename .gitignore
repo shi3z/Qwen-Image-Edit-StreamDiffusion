@@ -21,3 +21,4 @@ venv/
 
 # StreamDiffusion (external dependency)
 StreamDiffusion/
+node_modules/
