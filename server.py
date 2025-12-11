@@ -3,11 +3,33 @@
 Qwen-Image-Edit-2509 API Server
 Handles GPU inference, separated from frontend
 With Lightning LoRA for 2-step inference (~3s, no negative_prompt)
+
+GB10 (Blackwell) Optimized Version:
+- Disables torch.compile/JIT for stability
+- Uses BF16 for optimal performance
+- cuDNN benchmark enabled (safe on GB10)
 """
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+# Use GPU 0 for GB10 (single GPU)
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '0')
+
+# Configure GB10 environment BEFORE importing torch
+os.environ.setdefault('PYTORCH_JIT', '0')
+os.environ.setdefault('TORCH_COMPILE_DISABLE', '1')
+os.environ.setdefault('TORCHINDUCTOR_DISABLE', '1')
 
 import torch
+
+# Import GPU utils for GB10 detection
+from gpu_utils import is_gb10_gpu, print_gpu_info, get_optimal_dtype_for_gpu, get_gpu_info
+
+# GB10-specific configuration
+_is_gb10 = is_gb10_gpu()
+if _is_gb10:
+    print("[GB10 Detected] Using Blackwell-optimized settings")
+    print("  - JIT: DISABLED")
+    print("  - torch.compile: DISABLED")
+    print("  - cuDNN benchmark: ENABLED")
 import base64
 import io
 import time
@@ -60,12 +82,21 @@ def load_pipeline():
     if pipeline is not None:
         return
 
-    print("Loading Qwen-Image-Edit-2509...")
+    # Get optimal dtype for current GPU
+    dtype = get_optimal_dtype_for_gpu()
+    print(f"Loading Qwen-Image-Edit-2509 ({dtype})...")
+
+    # Print GPU info
+    gpu_info = get_gpu_info()
+    print(f"  GPU: {gpu_info['name']}")
+    print(f"  Compute Capability: {gpu_info['compute_capability']}")
+    print(f"  Memory: {gpu_info['memory_gb']:.1f} GB")
+
     from diffusers import QwenImageEditPlusPipeline
 
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     ).to('cuda')
 
     print(f"Model loaded! GPU Memory: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
@@ -171,11 +202,15 @@ async def root():
 
 @app.get("/health")
 async def health():
+    gpu_info = get_gpu_info()
     return {
         "status": "ok",
         "model_loaded": pipeline is not None,
         "optimized": "Lightning LoRA (2-step)",
         "inference_time": "~5.6s",
+        "gpu": gpu_info['name'],
+        "compute_capability": gpu_info['compute_capability'],
+        "is_gb10": gpu_info['is_gb10'],
         "gpu_memory": f"{torch.cuda.max_memory_allocated() / 1e9:.2f} GB" if torch.cuda.is_available() else "N/A"
     }
 
@@ -232,7 +267,10 @@ async def edit_image(request: EditRequest):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Qwen-Image-Edit-2509 API Server")
+    print("Qwen-Image-Edit-2509 API Server (GB10 Optimized)")
     print("=" * 60)
+
+    # Print startup info
+    print_gpu_info()
 
     uvicorn.run(app, host="0.0.0.0", port=8086)

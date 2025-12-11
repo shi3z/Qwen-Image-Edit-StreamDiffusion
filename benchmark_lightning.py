@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
 Benchmark Qwen-Image-Lightning LoRA for faster inference
+GB10 compatible version
 """
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+# Use GPU 0 for GB10
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '0')
 
 import torch
 import time
 from PIL import Image
 from diffusers import QwenImageEditPlusPipeline
+from gpu_utils import get_optimal_dtype_for_gpu, print_gpu_info
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
@@ -59,14 +62,19 @@ def benchmark(pipeline, name, steps=4, runs=5):
 
 def main():
     print("=" * 60)
-    print("Qwen-Image-Lightning LoRA Benchmark")
+    print("Qwen-Image-Lightning LoRA Benchmark (GB10 Compatible)")
     print("=" * 60)
 
+    # Print GPU info
+    print("\n[0] GPU Information")
+    print_gpu_info()
+
     # Load base model
-    print("\n[1] Loading Qwen-Image-Edit-2509...")
+    dtype = get_optimal_dtype_for_gpu()
+    print(f"\n[1] Loading Qwen-Image-Edit-2509 ({dtype})...")
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     ).to('cuda')
 
     mem = torch.cuda.max_memory_allocated() / 1e9

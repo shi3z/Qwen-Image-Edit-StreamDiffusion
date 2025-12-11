@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
 Benchmark different optimization strategies for Qwen-Image-Edit-2509
+GB10 compatible version
 """
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+# Use GPU 0 for GB10
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '0')
 
 import torch
 import time
 from PIL import Image
 from diffusers import QwenImageEditPlusPipeline
+from gpu_utils import should_use_torch_compile, print_gpu_info, get_optimal_dtype_for_gpu
 
 torch.backends.cudnn.benchmark = True
 
@@ -61,11 +64,18 @@ def main():
     print("Qwen-Image-Edit-2509 Optimization Benchmark")
     print("=" * 60)
 
-    # Baseline: bfloat16
-    print("\n[1] Loading baseline (bfloat16)...")
+    # Print GPU info and check compatibility
+    print("\n[0] Checking GPU compatibility...")
+    print_gpu_info()
+    use_compile = should_use_torch_compile()
+    print(f"  torch.compile enabled: {use_compile}")
+
+    # Baseline: optimal dtype
+    dtype = get_optimal_dtype_for_gpu()
+    print(f"\n[1] Loading baseline ({dtype})...")
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     ).to('cuda')
 
     baseline = benchmark(pipeline, "Baseline (bf16)")
@@ -89,24 +99,29 @@ def main():
     except Exception as e:
         print(f"  VAE slicing failed: {e}")
 
-    # Test torch.compile (if available)
+    # Test torch.compile (if available and supported)
     print("\n[4] Testing torch.compile (may take a while for first compile)...")
-    try:
-        # Reset to baseline first
-        del pipeline
-        torch.cuda.empty_cache()
+    if not use_compile:
+        print("  Skipping torch.compile (not supported on this GPU)")
+        compile_time = None
+    else:
+        try:
+            # Reset to baseline first
+            del pipeline
+            torch.cuda.empty_cache()
 
-        pipeline = QwenImageEditPlusPipeline.from_pretrained(
-            "Qwen/Qwen-Image-Edit-2509",
-            torch_dtype=torch.bfloat16,
-        ).to('cuda')
+            pipeline = QwenImageEditPlusPipeline.from_pretrained(
+                "Qwen/Qwen-Image-Edit-2509",
+                torch_dtype=dtype,
+            ).to('cuda')
 
-        # Compile the UNet
-        pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
-        compile_time = benchmark(pipeline, "With torch.compile", runs=3)
-        print(f"  Speedup vs baseline: {baseline/compile_time:.2f}x")
-    except Exception as e:
-        print(f"  torch.compile failed: {e}")
+            # Compile the UNet
+            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            compile_time = benchmark(pipeline, "With torch.compile", runs=3)
+            print(f"  Speedup vs baseline: {baseline/compile_time:.2f}x")
+        except Exception as e:
+            print(f"  torch.compile failed: {e}")
+            compile_time = None
 
     print("\n" + "=" * 60)
     print("Summary")

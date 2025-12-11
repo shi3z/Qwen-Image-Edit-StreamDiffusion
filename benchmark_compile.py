@@ -2,14 +2,18 @@
 """
 Benchmark torch.compile with max-autotune mode for Qwen-Image-Edit-2509
 This uses CUDA graphs and kernel fusion without needing TensorRT
+
+Note: torch.compile is automatically skipped on GB10 (Blackwell) GPUs
 """
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+# Use GPU 0 for GB10
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '0')
 
 import torch
 import time
 from PIL import Image
 from diffusers import QwenImageEditPlusPipeline
+from gpu_utils import should_use_torch_compile, print_gpu_info, safe_torch_compile, get_optimal_dtype_for_gpu
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
@@ -63,11 +67,18 @@ def main():
     print("torch.compile Optimization Benchmark")
     print("=" * 60)
 
+    # Print GPU info and check compatibility
+    print("\n[0] Checking GPU compatibility...")
+    print_gpu_info()
+    use_compile = should_use_torch_compile()
+    print(f"  torch.compile enabled: {use_compile}")
+
     # Load model
-    print("\n[1] Loading model (bfloat16)...")
+    dtype = get_optimal_dtype_for_gpu()
+    print(f"\n[1] Loading model ({dtype})...")
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     ).to('cuda')
 
     mem = torch.cuda.max_memory_allocated() / 1e9
@@ -89,53 +100,66 @@ def main():
 
     # Reset and try compile with default mode
     print("\n[4] Resetting and trying torch.compile (default)...")
-    del pipeline
-    torch.cuda.empty_cache()
 
-    pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
-    ).to('cuda')
-
-    print("  Compiling transformer (this may take a few minutes)...")
-    try:
-        pipeline.transformer = torch.compile(
-            pipeline.transformer,
-            mode="default",
-            fullgraph=False,  # Allow graph breaks
-        )
-        compile_time = benchmark(pipeline, "torch.compile (default)", runs=3)
-        print(f"  Speedup vs baseline: {baseline/compile_time:.2f}x")
-    except Exception as e:
-        print(f"  Failed: {e}")
-        import traceback
-        traceback.print_exc()
+    if not use_compile:
+        print("  Skipping torch.compile (not supported on this GPU)")
         compile_time = None
+    else:
+        del pipeline
+        torch.cuda.empty_cache()
+
+        pipeline = QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509",
+            torch_dtype=dtype,
+        ).to('cuda')
+
+        print("  Compiling transformer (this may take a few minutes)...")
+        try:
+            pipeline.transformer = torch.compile(
+                pipeline.transformer,
+                mode="default",
+                fullgraph=False,  # Allow graph breaks
+            )
+            compile_time = benchmark(pipeline, "torch.compile (default)", runs=3)
+            print(f"  Speedup vs baseline: {baseline/compile_time:.2f}x")
+        except Exception as e:
+            print(f"  Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            compile_time = None
 
     # Try compile with max-autotune
     print("\n[5] Trying torch.compile (max-autotune)...")
-    del pipeline
-    torch.cuda.empty_cache()
 
-    pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        "Qwen/Qwen-Image-Edit-2509",
-        torch_dtype=torch.bfloat16,
-    ).to('cuda')
-
-    print("  Compiling with max-autotune (may take longer)...")
-    try:
-        pipeline.transformer = torch.compile(
-            pipeline.transformer,
-            mode="max-autotune",
-            fullgraph=False,
-        )
-        autotune_time = benchmark(pipeline, "torch.compile (max-autotune)", runs=3)
-        print(f"  Speedup vs baseline: {baseline/autotune_time:.2f}x")
-    except Exception as e:
-        print(f"  Failed: {e}")
-        import traceback
-        traceback.print_exc()
+    if not use_compile:
+        print("  Skipping torch.compile (not supported on this GPU)")
         autotune_time = None
+    else:
+        try:
+            del pipeline
+        except NameError:
+            pass
+        torch.cuda.empty_cache()
+
+        pipeline = QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509",
+            torch_dtype=dtype,
+        ).to('cuda')
+
+        print("  Compiling with max-autotune (may take longer)...")
+        try:
+            pipeline.transformer = torch.compile(
+                pipeline.transformer,
+                mode="max-autotune",
+                fullgraph=False,
+            )
+            autotune_time = benchmark(pipeline, "torch.compile (max-autotune)", runs=3)
+            print(f"  Speedup vs baseline: {baseline/autotune_time:.2f}x")
+        except Exception as e:
+            print(f"  Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            autotune_time = None
 
     print("\n" + "=" * 60)
     print("Summary")
