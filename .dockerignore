@@ -1,0 +1,32 @@
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# UV/pip cache
+.uv/
+uv.lock
+
+# Test outputs
+*.jpg
+*.png
+benchmark_output.*
+
+# Temporary files
+*.tmp
+*.log
