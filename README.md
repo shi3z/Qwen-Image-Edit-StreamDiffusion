@@ -228,6 +228,60 @@ If you use this project, please cite the following works:
 }
 ```
 
+## Experimental Results Log
+
+### 2025-12-11: Custom FP8 Quantization Experiment (Failed)
+
+**Goal**: Implement custom FP8 inference pipeline for the transformer to reduce memory and improve speed.
+
+**Environment**:
+- GPU: NVIDIA GB10 (Blackwell, Compute Capability 12.1)
+- VRAM: 128.46 GB
+- PyTorch: 2.8+ with CUDA 12.x
+- Note: GB10 is outside PyTorch's officially supported range (CC 8.0-12.0)
+
+**Implementation**:
+- Created `fp8_linear.py` with two implementations:
+  - `FP8LinearSlow`: Manual dequantize → matmul → result (validation mode)
+  - `FP8LinearFast`: Uses `torch._scaled_mm` for native FP8 GEMM
+- Weights quantized to FP8 e4m3 (4 exponent, 3 mantissa bits, max=448.0)
+- Activations quantized to FP8 e5m2 (5 exponent, 2 mantissa bits, max=57344.0)
+- Per-channel scaling for weights, per-tensor scaling for activations
+- Calibration via `fp8_calibrate.py` (8 samples, 2 steps each)
+
+**Results** (4 steps, 512x512):
+
+| Configuration | Avg Time | vs BF16 | Peak Memory |
+|--------------|----------|---------|-------------|
+| **BF16 Baseline** | **28.809s** | **1.00x** | **57.79 GB** |
+| FP8 Slow | 44.597s | 0.65x (35% slower) | 78.64 GB |
+| FP8 Fast | 63.797s | 0.45x (55% slower) | 78.88 GB |
+
+**Findings**:
+1. `torch._scaled_mm` works on GB10 after fixing matrix dimensions (must be 16-divisible) and layout (row-major × column-major for cuBLASLt)
+2. Both FP8 modes are **slower** than BF16 baseline
+3. FP8 Fast (native `_scaled_mm`) is paradoxically slower than FP8 Slow (manual dequantize)
+4. Memory usage is **higher** with FP8 due to storing scales and intermediate tensors
+
+**Analysis**:
+- GB10 (Blackwell) FP8 GEMM kernels in PyTorch may not be optimized for CC 12.1
+- PyTorch's `_scaled_mm` requires specific matrix layouts that add overhead
+- The quantization/dequantization overhead outweighs any FP8 compute benefits
+- Native BF16 is well-optimized on this hardware
+
+**Conclusion**: Custom FP8 quantization is **not beneficial** on GB10 with current PyTorch. Recommend using:
+- Native BF16 (fastest at 28.8s)
+- Lightning LoRA for 2-step inference (5.6s)
+- torchao's FP8 if needed (may have better optimization)
+
+**Files Created**:
+- `fp8_linear.py` - FP8 Linear layer implementations
+- `fp8_calibrate.py` - Calibration script for activation statistics
+- `fp8_pipeline.py` - FP8 pipeline integration and benchmark
+- `fp8_checkpoint/` - Calibration data (weight scales, activation scales)
+
+---
+
 ## License
 
 Apache License 2.0
