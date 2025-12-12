@@ -282,6 +282,39 @@ If you use this project, please cite the following works:
 
 ---
 
+### 2025-12-12: Output Resolution Benchmark (BF16)
+
+**Goal**: Test if smaller output resolution improves inference speed more effectively than FP8 quantization.
+
+**Environment**: Same as above (GB10, 128.46GB VRAM)
+
+**Results** (BF16, 4 steps, 3 runs each):
+
+| Output Size | Avg Time | vs 512x512 | Peak Memory | Pixels/sec |
+|-------------|----------|------------|-------------|------------|
+| **256x256** | **15.34s** | **1.20x faster** | 62.27 GB | 4.3k |
+| 384x384 | 17.29s | 1.07x faster | 62.27 GB | 8.5k |
+| 512x512 | 18.43s | 1.00x (baseline) | 62.27 GB | 14.2k |
+| 640x640 | 20.69s | 0.89x | 62.27 GB | 19.8k |
+| 768x768 | 23.22s | 0.79x | 62.88 GB | 25.4k |
+| 1024x1024 | 29.36s | 0.63x | 66.85 GB | 35.7k |
+
+**Key Findings**:
+1. **Resolution scaling is sublinear**: 4x more pixels (256→512) only adds ~20% time
+2. **256x256 is fastest**: 15.34s (vs FP8's 44s - **2.9x faster**)
+3. **Memory nearly constant**: 62-67GB regardless of output size
+4. **Higher resolution = better throughput**: 1024x1024 produces 35.7k pixels/sec vs 4.3k for 256x256
+
+**Conclusion**:
+- **Reducing output resolution is far more effective than FP8 quantization**
+- For real-time use: 256x256 @ 15.34s beats FP8 512x512 @ 44s
+- For quality: 1024x1024 only costs 29s (same as FP8 512x512 baseline)
+
+**Files Created**:
+- `benchmark_bf16_sizes.py` - Resolution benchmark script
+
+---
+
 ## License
 
 Apache License 2.0
