@@ -315,6 +315,48 @@ If you use this project, please cite the following works:
 
 ---
 
+### 2025-12-12: Lightning LoRA + Resolution Benchmark
+
+**Goal**: Combine Lightning LoRA (2-step inference) with output resolution reduction for maximum speed.
+
+**Environment**: Same as above (GB10, 128.46GB VRAM)
+
+**Results** (Lightning LoRA, 2 steps, 3 runs each):
+
+| Config | Avg Time | FPS | Speedup vs 4-step 512 |
+|--------|----------|-----|----------------------|
+| Lightning 4-step 512 | 22.961s | 0.044 | (reference) |
+| **Lightning 2-step 256** | **10.245s** | **0.098** | **2.24x** |
+| Lightning 2-step 384 | 11.058s | 0.090 | 2.08x |
+| Lightning 2-step 512 | 11.911s | 0.084 | 1.93x |
+| Lightning 2-step 640 | 13.317s | 0.075 | 1.72x |
+| Lightning 2-step 768 | 14.961s | 0.067 | 1.53x |
+| Lightning 2-step 1024 | 19.172s | 0.052 | 1.20x |
+
+**Key Findings**:
+1. **Lightning 2-step + 256x256 = 10.245s** (fastest combination)
+2. **Resolution reduction still helps**: 256x256 is 16% faster than 512x512 with Lightning LoRA
+3. **2-step vs 4-step**: 2-step is consistently ~1.9-2.2x faster at same resolution
+4. **Memory constant**: 63-68GB regardless of resolution
+
+**Comparison with BF16 4-step**:
+| Method | 512x512 Time | 256x256 Time |
+|--------|--------------|--------------|
+| BF16 4-step | 18.43s | 15.34s |
+| Lightning 2-step | 11.91s | 10.25s |
+| **Speedup** | **1.55x** | **1.50x** |
+
+**Conclusion**:
+- **Lightning 2-step @ 256x256 is the fastest option** at 10.245s per image
+- Combining step reduction and resolution reduction provides cumulative benefits
+- For maximum quality: Lightning 2-step @ 512x512 (11.9s) provides good balance
+- For maximum speed: Lightning 2-step @ 256x256 (10.2s) is optimal
+
+**Files Created**:
+- `benchmark_lightning_sizes.py` - Lightning LoRA + resolution benchmark script
+
+---
+
 ## License
 
 Apache License 2.0
